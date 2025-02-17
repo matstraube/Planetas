@@ -2,123 +2,135 @@ import 'package:flutter/material.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
 
-// Classe para representar um Planeta
+void main() {
+  runApp(MyApp());
+}
+
+class MyApp extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: 'CRUD Planetas',
+      theme: ThemeData(primarySwatch: Colors.blue),
+      home: PlanetListScreen(),
+    );
+  }
+}
+
 class Planet {
   int? id;
   String name;
-  double distanceFromSun;
+  double distance;
   double size;
   String? nickname;
 
   Planet({
     this.id,
     required this.name,
-    required this.distanceFromSun,
+    required this.distance,
     required this.size,
     this.nickname,
   });
 
-  // Convert a Planet into a Map. The keys must match the column names in the database.
+  // Convertir um objeto Planet para Map para salvar no banco de dados
   Map<String, dynamic> toMap() {
     return {
       'id': id,
       'name': name,
-      'distanceFromSun': distanceFromSun,
+      'distance': distance,
       'size': size,
       'nickname': nickname,
     };
   }
 
-  // Extract a Planet from a Map
+  // Converter Map para Planet (para exibir os dados)
   factory Planet.fromMap(Map<String, dynamic> map) {
     return Planet(
       id: map['id'],
       name: map['name'],
-      distanceFromSun: map['distanceFromSun'],
+      distance: map['distance'],
       size: map['size'],
       nickname: map['nickname'],
     );
   }
 }
 
-// Classe para gerenciar o Banco de Dados SQLite
 class DatabaseHelper {
-  static final DatabaseHelper _instance = DatabaseHelper._internal();
-  factory DatabaseHelper() => _instance;
-  static Database? _database;
+  static final _databaseName = "planets.db";
+  static final _databaseVersion = 1;
+  static final table = 'planets';
 
-  DatabaseHelper._internal();
+  static final columnId = 'id';
+  static final columnName = 'name';
+  static final columnDistance = 'distance';
+  static final columnSize = 'size';
+  static final columnNickname = 'nickname';
+
+  DatabaseHelper._privateConstructor();
+  static final DatabaseHelper instance = DatabaseHelper._privateConstructor();
+
+  static Database? _database;
 
   Future<Database> get database async {
     if (_database != null) return _database!;
+
+    // Inicializando o banco de dados
     _database = await _initDatabase();
     return _database!;
   }
 
-  Future<Database> _initDatabase() async {
-    final path = await getDatabasesPath();
-    return await openDatabase(
-      join(path, 'planets.db'),
-      onCreate: (db, version) async {
-        await db.execute('''
-          CREATE TABLE planets(
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT,
-            distanceFromSun REAL,
-            size REAL,
-            nickname TEXT
+  // Abre o banco de dados
+  _initDatabase() async {
+    String path = join(await getDatabasesPath(), _databaseName);
+    return await openDatabase(path, version: _databaseVersion, onCreate: _onCreate);
+  }
+
+  // Cria a tabela de planetas
+  Future _onCreate(Database db, int version) async {
+    await db.execute('''
+          CREATE TABLE $table (
+            $columnId INTEGER PRIMARY KEY,
+            $columnName TEXT NOT NULL,
+            $columnDistance REAL NOT NULL,
+            $columnSize REAL NOT NULL,
+            $columnNickname TEXT
           )
-        ''');
-      },
-      version: 1,
-    );
+          ''');
   }
 
-  // Função para inserir um planeta
-  Future<void> insertPlanet(Planet planet) async {
-    final db = await database;
-    await db.insert('planets', planet.toMap(), conflictAlgorithm: ConflictAlgorithm.replace);
+  // Inserir um novo planeta
+  Future<int> insert(Planet planet) async {
+    Database db = await database;
+    return await db.insert(table, planet.toMap());
   }
 
-  // Função para obter a lista de planetas
-  Future<List<Planet>> getPlanets() async {
-    final db = await database;
-    final List<Map<String, dynamic>> maps = await db.query('planets');
-    return List.generate(maps.length, (i) {
-      return Planet.fromMap(maps[i]);
-    });
+  // Buscar todos os planetas
+  Future<List<Planet>> getAllPlanets() async {
+    Database db = await database;
+    var result = await db.query(table);
+    return result.isNotEmpty
+        ? result.map((e) => Planet.fromMap(e)).toList()
+        : [];
   }
 
-  // Função para atualizar um planeta
-  Future<void> updatePlanet(Planet planet) async {
-    final db = await database;
-    await db.update(
-      'planets',
+  // Atualizar um planeta
+  Future<int> update(Planet planet) async {
+    Database db = await database;
+    return await db.update(
+      table,
       planet.toMap(),
-      where: 'id = ?',
+      where: '$columnId = ?',
       whereArgs: [planet.id],
     );
   }
 
-  // Função para excluir um planeta
-  Future<void> deletePlanet(int id) async {
-    final db = await database;
-    await db.delete(
-      'planets',
-      where: 'id = ?',
+  // Deletar um planeta
+  Future<int> delete(int id) async {
+    Database db = await database;
+    return await db.delete(
+      table,
+      where: '$columnId = ?',
       whereArgs: [id],
-    );
-  }
-}
-
-// Interface do Usuário (UI)
-void main() => runApp(PlanetApp());
-
-class PlanetApp extends StatelessWidget {
-  @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      home: PlanetListScreen(),
     );
   }
 }
@@ -129,44 +141,60 @@ class PlanetListScreen extends StatefulWidget {
 }
 
 class _PlanetListScreenState extends State<PlanetListScreen> {
-  final DatabaseHelper _databaseHelper = DatabaseHelper();
-  late Future<List<Planet>> _planets;
+  late Future<List<Planet>> _planetsFuture;
 
   @override
   void initState() {
     super.initState();
-    _planets = _databaseHelper.getPlanets();
+    _planetsFuture = DatabaseHelper.instance.getAllPlanets();
   }
 
-  // Função para adicionar um planeta
-  void _addPlanet() async {
-    final newPlanet = Planet(
-      name: 'Earth',
-      distanceFromSun: 1.0,
-      size: 12742.0,
-      nickname: 'Blue Planet',
+  void _navigateToAddPlanetScreen([Planet? planet]) async {
+    final result = await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => PlanetFormScreen(planet: planet),
+      ),
     );
-    await _databaseHelper.insertPlanet(newPlanet);
-    setState(() {
-      _planets = _databaseHelper.getPlanets();
-    });
+    if (result != null) {
+      setState(() {
+        _planetsFuture = DatabaseHelper.instance.getAllPlanets();
+      });
+    }
   }
 
-  // Função para editar um planeta
-  void _editPlanet(Planet planet) async {
-    planet.name = 'Updated Name';
-    await _databaseHelper.updatePlanet(planet);
-    setState(() {
-      _planets = _databaseHelper.getPlanets();
-    });
-  }
-
-  // Função para excluir um planeta
   void _deletePlanet(int id) async {
-    await _databaseHelper.deletePlanet(id);
-    setState(() {
-      _planets = _databaseHelper.getPlanets();
-    });
+    bool confirmDelete = await _showDeleteConfirmationDialog();
+    if (confirmDelete) {
+      await DatabaseHelper.instance.delete(id);
+      setState(() {
+        _planetsFuture = DatabaseHelper.instance.getAllPlanets();
+      });
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Planeta excluído com sucesso")));
+    }
+  }
+
+  Future<bool> _showDeleteConfirmationDialog() async {
+    return await showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: Text('Confirmar Exclusão'),
+          content: Text('Tem certeza de que deseja excluir este planeta?'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: Text('Cancelar'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: Text('Confirmar'),
+            ),
+          ],
+        );
+      },
+    ) ??
+        false;
   }
 
   @override
@@ -174,16 +202,16 @@ class _PlanetListScreenState extends State<PlanetListScreen> {
     return Scaffold(
       appBar: AppBar(title: Text('Planetas')),
       body: FutureBuilder<List<Planet>>(
-        future: _planets,
+        future: _planetsFuture,
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
             return Center(child: CircularProgressIndicator());
           }
-          if (snapshot.hasError) {
-            return Center(child: Text('Erro ao carregar planetas'));
+          if (!snapshot.hasData || snapshot.data!.isEmpty) {
+            return Center(child: Text("Nenhum planeta cadastrado"));
           }
 
-          final planets = snapshot.data ?? [];
+          final planets = snapshot.data!;
           return ListView.builder(
             itemCount: planets.length,
             itemBuilder: (context, index) {
@@ -191,7 +219,7 @@ class _PlanetListScreenState extends State<PlanetListScreen> {
               return ListTile(
                 title: Text(planet.name),
                 subtitle: Text(planet.nickname ?? 'Sem apelido'),
-                onTap: () => _editPlanet(planet),
+                onTap: () => _navigateToAddPlanetScreen(planet),
                 trailing: IconButton(
                   icon: Icon(Icons.delete),
                   onPressed: () => _deletePlanet(planet.id!),
@@ -202,9 +230,123 @@ class _PlanetListScreenState extends State<PlanetListScreen> {
         },
       ),
       floatingActionButton: FloatingActionButton(
-        onPressed: _addPlanet,
+        onPressed: () => _navigateToAddPlanetScreen(),
         child: Icon(Icons.add),
       ),
     );
   }
 }
+
+class PlanetFormScreen extends StatefulWidget {
+  final Planet? planet;
+
+  PlanetFormScreen({this.planet});
+
+  @override
+  _PlanetFormScreenState createState() => _PlanetFormScreenState();
+}
+
+class _PlanetFormScreenState extends State<PlanetFormScreen> {
+  final _formKey = GlobalKey<FormState>();
+  late TextEditingController _nameController;
+  late TextEditingController _distanceController;
+  late TextEditingController _sizeController;
+  late TextEditingController _nicknameController;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.planet != null) {
+      _nameController = TextEditingController(text: widget.planet!.name);
+      _distanceController = TextEditingController(text: widget.planet!.distance.toString());
+      _sizeController = TextEditingController(text: widget.planet!.size.toString());
+      _nicknameController = TextEditingController(text: widget.planet!.nickname ?? '');
+    } else {
+      _nameController = TextEditingController();
+      _distanceController = TextEditingController();
+      _sizeController = TextEditingController();
+      _nicknameController = TextEditingController();
+    }
+  }
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _distanceController.dispose();
+    _sizeController.dispose();
+    _nicknameController.dispose();
+    super.dispose();
+  }
+
+  void _savePlanet() async {
+    if (_formKey.currentState!.validate()) {
+      final planet = Planet(
+        id: widget.planet?.id,
+        name: _nameController.text,
+        distance: double.parse(_distanceController.text),
+        size: double.parse(_sizeController.text),
+        nickname: _nicknameController.text.isNotEmpty ? _nicknameController.text : null,
+      );
+      if (planet.id == null) {
+        await DatabaseHelper.instance.insert(planet);
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Planeta adicionado com sucesso")));
+      } else {
+        await DatabaseHelper.instance.update(planet);
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Planeta atualizado com sucesso")));
+      }
+      Navigator.pop(context, true);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: Text(widget.planet == null ? 'Adicionar Planeta' : 'Editar Planeta')),
+      body: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Form(
+          key: _formKey,
+          child: Column(
+            children: [
+              TextFormField(
+                controller: _nameController,
+                decoration: InputDecoration(labelText: 'Nome do planeta'),
+                validator: (value) => value!.isEmpty ? 'Nome é obrigatório' : null,
+              ),
+              TextFormField(
+                controller: _distanceController,
+                decoration: InputDecoration(labelText: 'Distância do Sol (UA)'),
+                keyboardType: TextInputType.number,
+                validator: (value) {
+                  if (value!.isEmpty) return 'Distância é obrigatória';
+                  if (double.tryParse(value) == null || double.parse(value) <= 0) return 'Valor inválido';
+                  return null;
+                },
+              ),
+              TextFormField(
+                controller: _sizeController,
+                decoration: InputDecoration(labelText: 'Tamanho (km)'),
+                keyboardType: TextInputType.number,
+                validator: (value) {
+                  if (value!.isEmpty) return 'Tamanho é obrigatório';
+                  if (double.tryParse(value) == null || double.parse(value) <= 0) return 'Valor inválido';
+                  return null;
+                },
+              ),
+              TextFormField(
+                controller: _nicknameController,
+                decoration: InputDecoration(labelText: 'Apelido (opcional)'),
+              ),
+              SizedBox(height: 20),
+              ElevatedButton(
+                onPressed: _savePlanet,
+                child: Text(widget.planet == null ? 'Salvar' : 'Atualizar'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
