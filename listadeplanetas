@@ -1,0 +1,210 @@
+import 'package:flutter/material.dart';
+import 'package:sqflite/sqflite.dart';
+import 'package:path/path.dart';
+
+// Classe para representar um Planeta
+class Planet {
+  int? id;
+  String name;
+  double distanceFromSun;
+  double size;
+  String? nickname;
+
+  Planet({
+    this.id,
+    required this.name,
+    required this.distanceFromSun,
+    required this.size,
+    this.nickname,
+  });
+
+  // Convert a Planet into a Map. The keys must match the column names in the database.
+  Map<String, dynamic> toMap() {
+    return {
+      'id': id,
+      'name': name,
+      'distanceFromSun': distanceFromSun,
+      'size': size,
+      'nickname': nickname,
+    };
+  }
+
+  // Extract a Planet from a Map
+  factory Planet.fromMap(Map<String, dynamic> map) {
+    return Planet(
+      id: map['id'],
+      name: map['name'],
+      distanceFromSun: map['distanceFromSun'],
+      size: map['size'],
+      nickname: map['nickname'],
+    );
+  }
+}
+
+// Classe para gerenciar o Banco de Dados SQLite
+class DatabaseHelper {
+  static final DatabaseHelper _instance = DatabaseHelper._internal();
+  factory DatabaseHelper() => _instance;
+  static Database? _database;
+
+  DatabaseHelper._internal();
+
+  Future<Database> get database async {
+    if (_database != null) return _database!;
+    _database = await _initDatabase();
+    return _database!;
+  }
+
+  Future<Database> _initDatabase() async {
+    final path = await getDatabasesPath();
+    return await openDatabase(
+      join(path, 'planets.db'),
+      onCreate: (db, version) async {
+        await db.execute('''
+          CREATE TABLE planets(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT,
+            distanceFromSun REAL,
+            size REAL,
+            nickname TEXT
+          )
+        ''');
+      },
+      version: 1,
+    );
+  }
+
+  // Função para inserir um planeta
+  Future<void> insertPlanet(Planet planet) async {
+    final db = await database;
+    await db.insert('planets', planet.toMap(), conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  // Função para obter a lista de planetas
+  Future<List<Planet>> getPlanets() async {
+    final db = await database;
+    final List<Map<String, dynamic>> maps = await db.query('planets');
+    return List.generate(maps.length, (i) {
+      return Planet.fromMap(maps[i]);
+    });
+  }
+
+  // Função para atualizar um planeta
+  Future<void> updatePlanet(Planet planet) async {
+    final db = await database;
+    await db.update(
+      'planets',
+      planet.toMap(),
+      where: 'id = ?',
+      whereArgs: [planet.id],
+    );
+  }
+
+  // Função para excluir um planeta
+  Future<void> deletePlanet(int id) async {
+    final db = await database;
+    await db.delete(
+      'planets',
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+}
+
+// Interface do Usuário (UI)
+void main() => runApp(PlanetApp());
+
+class PlanetApp extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      home: PlanetListScreen(),
+    );
+  }
+}
+
+class PlanetListScreen extends StatefulWidget {
+  @override
+  _PlanetListScreenState createState() => _PlanetListScreenState();
+}
+
+class _PlanetListScreenState extends State<PlanetListScreen> {
+  final DatabaseHelper _databaseHelper = DatabaseHelper();
+  late Future<List<Planet>> _planets;
+
+  @override
+  void initState() {
+    super.initState();
+    _planets = _databaseHelper.getPlanets();
+  }
+
+  // Função para adicionar um planeta
+  void _addPlanet() async {
+    final newPlanet = Planet(
+      name: 'Earth',
+      distanceFromSun: 1.0,
+      size: 12742.0,
+      nickname: 'Blue Planet',
+    );
+    await _databaseHelper.insertPlanet(newPlanet);
+    setState(() {
+      _planets = _databaseHelper.getPlanets();
+    });
+  }
+
+  // Função para editar um planeta
+  void _editPlanet(Planet planet) async {
+    planet.name = 'Updated Name';
+    await _databaseHelper.updatePlanet(planet);
+    setState(() {
+      _planets = _databaseHelper.getPlanets();
+    });
+  }
+
+  // Função para excluir um planeta
+  void _deletePlanet(int id) async {
+    await _databaseHelper.deletePlanet(id);
+    setState(() {
+      _planets = _databaseHelper.getPlanets();
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: Text('Planetas')),
+      body: FutureBuilder<List<Planet>>(
+        future: _planets,
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return Center(child: CircularProgressIndicator());
+          }
+          if (snapshot.hasError) {
+            return Center(child: Text('Erro ao carregar planetas'));
+          }
+
+          final planets = snapshot.data ?? [];
+          return ListView.builder(
+            itemCount: planets.length,
+            itemBuilder: (context, index) {
+              final planet = planets[index];
+              return ListTile(
+                title: Text(planet.name),
+                subtitle: Text(planet.nickname ?? 'Sem apelido'),
+                onTap: () => _editPlanet(planet),
+                trailing: IconButton(
+                  icon: Icon(Icons.delete),
+                  onPressed: () => _deletePlanet(planet.id!),
+                ),
+              );
+            },
+          );
+        },
+      ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: _addPlanet,
+        child: Icon(Icons.add),
+      ),
+    );
+  }
+}
